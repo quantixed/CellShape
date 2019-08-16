@@ -1,6 +1,11 @@
 #pragma TextEncoding = "UTF-8"
 #pragma rtGlobals=3		// Use modern global access method and strict wave access.
 
+// IMOD models converted using model2point are the input here.
+// Note that naming of files is important.
+// GFP_Tub_X_Y and GFP_X_Y will cause problems.
+// Must be "UniqueAlnum"_X_Y for the code to run in current state.
+
 ////////////////////////////////////////////////////////////////////////
 // Menu items
 ////////////////////////////////////////////////////////////////////////
@@ -21,7 +26,8 @@ End
 Function TheLoader()
 	LoadIMODModels()
 	ProcessAllModels()
-//	MakeTheLayouts("q_",6,8)
+	CollectAllMeasurements()
+	ProcessAllConditions()
 End
 
 ////////////////////////////////////////////////////////////////////////
@@ -117,6 +123,7 @@ Function MakeObjectContourWaves()
 	KillWaves/Z filtObj,UniqueContours,MatA
 End
 
+// this function goes into each datafolder and run some code on the contours in there
 Function ProcessAllModels()
 	SetDataFolder root:data:	// relies on earlier load
 	DFREF dfr = GetDataFolderDFR()
@@ -130,14 +137,17 @@ Function ProcessAllModels()
 		folderName = GetIndexedObjNameDFR(dfr, 4, i)
 		SetDataFolder ":'" + folderName + "':"
 		// Look at all outlines. There are centring/rotation options. Plots are called q_*
-		CentreAndPlot()
+		CentreAndPlot(0)
 		TakeMeasurements()
 		SetDataFolder root:data:
 	endfor
 	SetDataFolder root:
+//	MakeTheLayouts("q_",6,8)
 End
 
-STATIC Function CentreAndPlot()
+///	@param	plotOpt Variable to determine if we make a plot or not
+STATIC Function CentreAndPlot(plotOpt)
+	Variable plotOpt
 	String wList = WaveList("cell*",";","")
 	Variable nWaves = ItemsInList(wList)
 	String wName, w0Name
@@ -149,28 +159,30 @@ STATIC Function CentreAndPlot()
 		wName = StringFromList(i,wList)
 		w0Name = "root:data:" + folderName + ":" + wName
 		Wave/Z w0 = $w0Name
-		MakeCellggPlot(w0)
+		// the wave generated here is centred and/or rotated. It's called c_*
+		Wave w1 = Centralise2DWave(w0,midpoint = 1) // centring/rotation option here
+		if(plotOpt == 1)
+			MakeCellggPlot(w0)
+		endif
 	endfor
 End
 
 STATIC Function MakeCellggPlot(w0, [plusMinus])
 	Wave w0
 	Variable plusMinus
-	// the wave generated here is centred and/or rotated. It's called c_*
-	Wave w2 = Centralise2DWave(w0,midpoint = 1) // centring/rotation option here
 	String plotName = "q_" + GetWavesDataFolder(w0,0) + "_" + NameOfWave(w0)
 	KillWindow/Z $plotname
-	Display/N=$plotName/HIDE=1 w2[][1]/TN=Outline0 vs w2[][0]
+	Display/N=$plotName/HIDE=1 w0[][1]/TN=Outline0 vs w0[][0]
 	ModifyGraph/W=$plotName rgb(Outline0)=(68*257,170*257,153*257)
 	ModifyGraph/W=$plotName width={Aspect,1}
 	// now work out how to display the image
 	if(ParamIsDefault(plusMinus) == 1)
-		Variable last2 = dimSize(w2,0)
-		Variable xMinVal = WaveMin(w2,0,last2 - 1)
-		Variable xMaxVal = WaveMax(w2,0,last2 - 1)
+		Variable last2 = dimSize(w0,0)
+		Variable xMinVal = WaveMin(w0,0,last2 - 1)
+		Variable xMaxVal = WaveMax(w0,0,last2 - 1)
 		xMaxVal = Max(xMaxVal,abs(xMinVal))
-		Variable yMinVal = WaveMin(w2,last2,last2*2 - 1)
-		Variable yMaxVal = WaveMax(w2,last2,last2*2 - 1)
+		Variable yMinVal = WaveMin(w0,last2,last2*2 - 1)
+		Variable yMaxVal = WaveMax(w0,last2,last2*2 - 1)
 		yMaxVal = Max(yMaxVal,abs(yMinVal))
 		Variable theMaxIs = Max(xMaxVal,yMaxVal)
 		SetAxis/W=$plotName left -theMaxIs,theMaxIs
@@ -235,13 +247,16 @@ Function TakeMeasurements()
 	String wList = WaveList("c_cell_*",";","")
 	Variable nWaves = ItemsInList(wList)
 	Make/O/N=(nWaves) Img_MinAxis, Img_MajAxis, Img_Perimeter, Img_Area
+	Make/O/N=(nWaves,2)/T Img_Label
 	String currentDF = GetDataFolder(0)
-	String wName,tName
+	Img_label[][0] = currentDF
+	String wName
 	
 	Variable i,j
 	
 	for (i = 0; i < nWaves; i += 1)
 		wName = StringFromList(i, wList)
+		Img_Label[i][1] = wName
 		Wave w0 = $wName
 		Img_MinAxis[i] = VesicleAxisLength(w0,1)
 		Img_MajAxis[i] = VesicleAxisLength(w0,0)
@@ -253,10 +268,6 @@ Function TakeMeasurements()
 	if(numpnts(Img_Area) > 0)
 		MatrixOp/O/NTHR=0 Img_AspectRatio = Img_MinAxis / Img_MajAxis
 		MatrixOp/O/NTHR=0 Img_Circularity = (4 * pi * Img_Area) / (Img_Perimeter * Img_Perimeter)
-//	elseif(numpnts(Img_Area) == 1)
-//		MatrixOp/O/NTHR=0 Img_AspectRatio = Img_MinAxis / Img_MajAxis
-//		MatrixOp/O/FREE/NTHR=0 tempMat = Img_Perimeter * Img_Perimeter
-//		MatrixOp/O/NTHR=0 Img_Circularity = 4 * pi * tempMat
 	else
 		Print "No cells in", currentDF
 	endif
@@ -301,10 +312,181 @@ STATIC Function FindLengthOfXYCoords(m1)
 	return sum(tempNorm)
 End
 
+STATIC Function CollectAllMeasurements()
+	SetDataFolder root:data:	// relies on earlier load
+	DFREF dfr = GetDataFolderDFR()
+	String folderName
+	Variable numDataFolders = CountObjectsDFR(dfr, 4)
+	String wList = ""
+	
+	Variable i,j
+	// assemble a string of semi-colon separated targets in the data folder
+	for(i = 0; i < numDataFolders; i += 1)
+		folderName = GetIndexedObjNameDFR(dfr, 4, i)
+		wList += "root:data:" + folderName + ":thisWave;"
+	endfor
+	
+	// we need to concatenate these waves into root (p_all_*)
+	String targetWaveList = "Img_MinAxis;Img_MajAxis;Img_Perimeter;Img_Area;Img_Label;"
+	Variable nTargets = ItemsInList(targetWaveList)
+	String targetName, tList, conName
+	
+	SetDataFolder root:
+	String fullName,modtList
+	
+	for(i = 0; i < nTargets; i += 1)
+		targetName = StringFromList(i,targetWaveList)
+		tList = ReplaceString("thisWave",wList,targetName)
+		modtList = tList
+		// because some waves might not exist
+		for(j = 0; j < numDataFolders; j +=1)
+			fullName = StringFromList(j, tList)
+			Wave testW = $fullName
+			if(!WaveExists(testW))
+				modtList = RemoveFromList(fullName,modtList)
+			endif
+		endfor
+		// if there were no waves of that type in any of the data folders
+		if(ItemsInList(modtList) > 0)
+			conName = "all_" + targetName
+			Concatenate/O/NP=0 modtList, $conName
+		endif
+	endfor
+End
+
+Function ProcessAllConditions()
+	WAVE/Z/T condWave
+	WAVE/Z/T all_Img_Label
+	
+	Variable cond = numpnts(condWave)
+	Variable nWaves = dimsize(all_Img_Label,0)
+	// all_Img_index will hold index of condition [0]
+	// number of contours [1] possibly redundant
+	// index of all_Img_Label
+	Make/O/N=(nWaves,3) all_Img_Index
+	all_Img_Index[][2] = p
+	Variable counter
+	String condition, dataFolderName
+	
+	Variable i,j
+	
+	for(i = 0; i < cond; i += 1)
+		counter = 0
+		condition = condWave[i]
+		for(j = 0; j < nWaves; j += 1)
+			dataFolderName = All_Img_Label[j][0]
+			if(stringmatch(dataFolderName,condition + "_*") == 1)
+				all_Img_Index[j][0] = i
+				all_Img_Index[j][1] = counter
+				counter += 1
+			endif
+		endfor
+	endfor
+	
+	// now that all_Img_Index is built, for each condition
+	// make a wave to lookup (using index of all_Img_Label) the wave
+	String w0Name
+	
+	for(i = 0; i < cond; i += 1)
+		w0Name = "cond" + num2str(i) + "_Img_Index"
+		Make/O/N=(nWaves) $w0Name
+		Wave w0 = $w0Name
+		w0[] = (all_Img_Index[p][0] == i) ? all_Img_Index[p][2] : NaN
+		WaveTransform zapnans w0
+	endfor
+	
+	// now we have these waves let's make the versions with the results
+	String targetWaveList = "Img_MinAxis;Img_MajAxis;Img_Perimeter;Img_Area;"
+	Variable nTargets = ItemsInList(targetWaveList)
+	String w1Name, tName,w2Name
+	Variable nRows
+	// which condition has the most cells? We need to know this to make the plots
+	WaveStats/Q/RMD=[][1] all_Img_Index
+	Variable mostCells = V_Max + 1 // 0-based
+	
+	for(i = 0; i < cond; i += 1)
+		w0Name =  "cond" + num2str(i) + "_Img_Index"
+		Wave w0 = $w0Name
+		nRows = numpnts(w0)
+		for(j = 0; j < nTargets; j += 1)
+			tName = "all_" + StringFromList(j,targetWaveList)
+			Wave targetW = $tName
+			w1Name = "cond" + num2str(i) + "_" + StringFromList(j,targetWaveList)
+			Make/O/N=(nRows) $w1Name
+			Wave w1 = $w1Name
+			w1[] = targetW[w0[p]]
+			WaveTransform zapnans w1
+			// now store in a 2d matrix
+			w2Name = ReplaceString("cond",w1Name,"vb")
+			Make/O/N=(mostCells,cond) $w2Name = NaN
+			Wave w2 = $w2Name
+			w2[0,nRows - 1][i] = w1[p]
+		endfor
+	endfor
+	
+	String plotName
+	KillWindow/Z summaryLayout
+	NewLayout/N=summaryLayout
+	
+	for(i = 0; i < nTargets; i += 1)
+		plotName =  "p_" + StringFromList(i,targetWaveList)
+		KillWindow/Z $plotName
+		Display/N=$plotName
+		for(j = 0; j < cond; j += 1)
+			w0Name = "vb" + num2str(j) + "_" + StringFromList(i,targetWaveList)
+			Wave w0 = $w0Name
+			BuildBoxOrViolinPlot(w0,plotName,j)
+		endfor
+		SetAxis/A/N=1/E=1/W=$plotName left
+		ModifyGraph/W=$plotName toMode=-1
+		AppendLayoutObject/W=summaryLayout graph $plotName
+	endfor
+	
+	// Label y-axes
+	Label/W=p_Img_Area left "Area (\u03BCm\S2\M)"
+	Label/W=p_Img_Perimeter left "Perimeter (\u03BCm)"
+	Label/W=p_Img_minAxis left "Minor axis (\u03BCm)"
+	Label/W=p_Img_majAxis left "Major axis (\u03BCm)"
+
+	// Tidy summary layout
+	DoWindow/F summaryLayout
+	// in case these are not captured as prefs
+	LayoutPageAction size(-1)=(595, 842), margins(-1)=(18, 18, 18, 18)
+	ModifyLayout units=0
+	ModifyLayout frame=0,trans=1
+	Execute /Q "Tile/A=(4,3)/O=1"
+End
+
+// This function will make a "multicolumn" boxplot or violinplot (Igor >8 only) 
+///	@param	matA	matrix of points to be appended
+///	@param	plotName	string to tell igor which graph window to work on
+///	@param	ii	variable to indicate which condition (for coloring)
+STATIC Function BuildBoxOrViolinPlot(matA,plotName,ii)
+	WAVE matA
+	String plotName
+	Variable ii
+	
+	String wName = NameOfWave(matA)
+	Wave/T/Z labelWave = root:labelWave
+	Wave/Z colorWave = root:colorWave
+	//  This works because all matrices passed to this function have the same dimensions
+	Variable nCells = DimSize(matA,0)
+	if(nCells < 100)
+		AppendBoxPlot/W=$plotName matA vs labelWave
+		ModifyBoxPlot/W=$plotName trace=$wName,markers={19,-1,19},markerSizes={2,2,2}
+		ModifyBoxPlot/W=$plotName trace=$wName,whiskerMethod=4
+	else
+		AppendViolinPlot/W=$plotName matA vs labelWave
+		ModifyViolinPlot/W=$plotName trace=$wName,ShowMean,MeanMarker=19,CloseOutline
+		ModifyViolinPlot/W=$plotName trace=$wName,DataMarker=19
+	endif
+	Variable alphaLevel = DecideOpacity(nCells)
+	ModifyGraph/W=$plotName rgb($wName)=(colorWave[ii][0],colorWave[ii][1],colorWave[ii][2],alphaLevel)
+End
+
 ////////////////////////////////////////////////////////////////////////
 // Utility functions
 ////////////////////////////////////////////////////////////////////////
-
 Function CleanSlate()
 	String fullList = WinList("*", ";","WIN:71")
 	Variable allItems = ItemsInList(fullList)
@@ -449,7 +631,7 @@ Function MakeColorWave(cond)
 	endif
 	
 	Variable color
-	Make/O/N=(cond,3) root:colorwave
+	Make/O/N=(cond,3) root:colorWave
 	WAVE colorWave = root:colorWave
 	Variable i
 	
@@ -524,11 +706,25 @@ STATIC Function MakeTheLayouts(prefix,nRow,nCol,[iter, filtVar])
 	SavePICT/O/WIN=$layoutName/PGR=(1,-1)/E=-2/W=(0,0,0,0) as fileName
 End
 
+STATIC Function DecideOpacity(nTrace)
+	Variable nTrace
+	Variable alpha
+	if(nTrace < 10)
+		alpha = 1
+	elseif(nTrace < 50)
+		alpha = 0.5
+	elseif(nTrace < 100)
+		alpha = 0.3
+	else
+		alpha = 0.2
+	endif
+	alpha = round(65535 * alpha)
+	return alpha
+End
 
 ////////////////////////////////////////////////////////////////////////
 // Panel functions
 ////////////////////////////////////////////////////////////////////////
-
 STATIC Function Diviner2User(condWave)
 	WAVE/T condWave
 	DoWindow/F SelectPanel
@@ -654,7 +850,10 @@ Function DoItButtonProc(ctrlName) : ButtonControl
 				Print "Error: Two conditions have the same name."
 				break
 			else
-				LoadIMODModels()
+				KillWindow/Z AliasCheck
+				// now execute main program
+				KillWaves/Z testSel
+				TheLoader()
 				return 0
 			endif
 	endswitch	
