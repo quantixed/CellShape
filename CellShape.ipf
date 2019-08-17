@@ -22,12 +22,17 @@ End
 Function IMODModelAnalysis()
 	PreLoader()
 End
-
+// we stop beween these two. User input needed.
 Function TheLoader()
 	LoadIMODModels()
 	ProcessAllModels()
 	CollectAllMeasurements()
 	ProcessAllConditions()
+	ImageQuilt()
+	MakeTheLayouts("p",5,3, rev = 1, saveIt = 0)
+	MakeTheLayouts("quilt",4,3, rev = 1, saveIt = 0)
+	TidyAndSave("p")
+	TidyAndSave("quilt")
 End
 
 ////////////////////////////////////////////////////////////////////////
@@ -327,7 +332,7 @@ STATIC Function CollectAllMeasurements()
 	endfor
 	
 	// we need to concatenate these waves into root (p_all_*)
-	String targetWaveList = "Img_MinAxis;Img_MajAxis;Img_Perimeter;Img_Area;Img_Label;"
+	String targetWaveList = "Img_MinAxis;Img_MajAxis;Img_Perimeter;Img_Area;Img_Label;Img_AspectRatio;Img_Circularity;"
 	Variable nTargets = ItemsInList(targetWaveList)
 	String targetName, tList, conName
 	
@@ -396,7 +401,7 @@ Function ProcessAllConditions()
 	endfor
 	
 	// now we have these waves let's make the versions with the results
-	String targetWaveList = "Img_MinAxis;Img_MajAxis;Img_Perimeter;Img_Area;"
+	String targetWaveList = "Img_MinAxis;Img_MajAxis;Img_Perimeter;Img_Area;Img_AspectRatio;Img_Circularity;"
 	Variable nTargets = ItemsInList(targetWaveList)
 	String w1Name, tName,w2Name
 	Variable nRows
@@ -439,7 +444,6 @@ Function ProcessAllConditions()
 		endfor
 		SetAxis/A/N=1/E=1/W=$plotName left
 		ModifyGraph/W=$plotName toMode=-1
-		AppendLayoutObject/W=summaryLayout graph $plotName
 	endfor
 	
 	// Label y-axes
@@ -447,14 +451,126 @@ Function ProcessAllConditions()
 	Label/W=p_Img_Perimeter left "Perimeter (\u03BCm)"
 	Label/W=p_Img_minAxis left "Minor axis (\u03BCm)"
 	Label/W=p_Img_majAxis left "Major axis (\u03BCm)"
+	Label/W=p_Img_AspectRatio left "Aspect Ratio"
+	Label/W=p_Img_Circularity left "Circularity"
+	
+	// Look at maj/minor axes on a plot
+	plotName = "p_Img_Axes"
+	KillWindow/Z $plotName
+	Display/N=$plotName
+	Variable alphaLevel = DecideOpacity(mostCells)
+	WAVE/Z All_Img_MajAxis = root:All_Img_MajAxis
+	Variable maxVal = RoundFunction(WaveMax(all_Img_MajAxis),20)
+	WAVE/Z colorWave = root:colorWave
+	WAVE/Z all_Img_Area = root:all_Img_Area
+	Variable biggestCell = WaveMax(all_Img_Area)
+	for(i = 0; i < cond; i += 1)
+		w0Name = "cond" + num2str(i) + "_Img_MajAxis"
+		w1Name = "cond" + num2str(i) + "_Img_MinAxis"
+		AppendToGraph/W=$plotName $w1Name vs $w0Name
+		ModifyGraph/W=$plotName rgb($w1Name)=(colorWave[i][0],colorWave[i][1],colorWave[i][2],alphaLevel)
+		ModifyGraph/W=$plotName rgb($w1Name)=(colorWave[i][0],colorWave[i][1],colorWave[i][2],alphaLevel)
+		w2Name = ReplaceString("MinAxis",w1Name,"Area")
+		ModifyGraph/W=$plotName zmrkSize($w1Name)={$w2Name,0,biggestCell,1,8}
+		ModifyGraph/W=$plotName mrkThick($w1Name)=0
+	endfor
+	SetAxis/W=$plotName left 0,maxVal
+	SetAxis/W=$plotName bottom 0,maxVal
+	ModifyGraph/W=$plotName mode=3,marker=19
+	ModifyGraph/W=$plotName width={Aspect,1}
+	Label/W=$plotName left "Minor axis (\u03BCm)"
+	Label/W=$plotName bottom "Major axis (\u03BCm)"
+End
 
-	// Tidy summary layout
-	DoWindow/F summaryLayout
-	// in case these are not captured as prefs
-	LayoutPageAction size(-1)=(595, 842), margins(-1)=(18, 18, 18, 18)
-	ModifyLayout units=0
-	ModifyLayout frame=0,trans=1
-	Execute /Q "Tile/A=(4,3)/O=1"
+Function ImageQuilt()
+	// First let's work out how big a quilt to make (they are square)
+	Variable qSize = QuiltCalculator()
+	// if qSize is 7, we will take 49 outlines and plot them in a 7 x 7 grid
+	// however we will use a grid of 9 x 9 to allow a border of one, i.e. 0-8
+	// In CellMigration a large matrix was build for each condition with everything offset
+	// We'll do everything by offsetting using c_cell* waves
+	// Each condition has a condn_IMG_Index wave which gives the index position in All_Img_Label
+	WAVE/Z/T condWave = root:condWave
+	Variable cond = numpnts(condWave)
+	String w0Name, w1Name, w2Name
+	WAVE/Z all_Img_Area = root:all_Img_area
+	String plotName, cellDF, cellName, plotWave, tName
+	WAVE/Z/T all_Img_Label = root:all_Img_Label
+	
+	Variable i,j
+	
+	for(i = 0; i < cond; i += 1)
+		w0Name = "cond" + num2str(i) + "_Img_Index"
+		Wave w0 = $w0Name
+		// Sample qSize^2 from each cond index wave
+		StatsSample/N=(qSize^2) w0
+		WAVE/Z W_Sampled
+		w1Name = ReplaceString("Img_Index",w0Name,"Smp_Index")
+		Duplicate/O W_Sampled, $w1Name
+		Wave w1 = $w1Name
+		// Now collect the area values for this sample from all_Img_Area
+		w2Name = ReplaceString("Img_Index",w0Name,"Smp_Area")
+		Make/O/N=(qSize^2) $w2Name
+		Wave w2 = $w2Name
+		w2[] = all_Img_Area[w1[p]]
+		// Now sort these outlines by their Area
+		Sort w2, w2, w1
+		// Make the quilt window
+		plotName = "quilt_cond" + num2str(i) + "_sample"
+		KillWindow/Z $plotName
+		Display/N=$plotName
+		Variable biggestVal = 0
+		// Now add them all to the quilt
+		for(j = 0; j < qSize^2; j += 1)
+			// w1 holds the index in all_* for a sample of cells ranked by area
+			cellDF = all_Img_Label[w1[j]][0]
+			cellName = all_Img_Label[w1[j]][1]
+			plotWave = "root:data:" + cellDF + ":" + cellName
+			Wave w3 = $plotWave
+			tName = "outL" + num2str(j)
+			AppendToGraph/W=$plotName w3[][1]/TN=$tName vs w3[][0]
+			// while we are here let's grab the biggest value so that we can offset
+			biggestVal = max(WaveMax(w3),biggestVal)
+		endfor
+	endfor
+	// the next step is to offset everything
+	biggestVal = RoundFunction(biggestVal, 10) * 2
+	Variable maxVal = (qSize + 1) * biggestVal
+	WAVE/Z colorWave = root:colorWave
+	for(i = 0; i < cond; i += 1)
+		plotName = "quilt_cond" + num2str(i) + "_sample"
+		for(j = 0; j < qSize^2; j += 1)
+			tName = "outL" + num2str(j)
+			ModifyGraph/W=$plotName offset($tName)={(mod(j,7) + 1) * biggestVal,(floor(j / 7) + 1) * biggestVal}
+		endfor
+		ModifyGraph/W=$plotName rgb=(colorWave[i][0],colorWave[i][1],colorWave[i][2])
+		SetAxis/W=$plotName left maxVal,0
+		SetAxis/W=$plotName bottom 0, maxVal
+		ModifyGraph/W=$plotName width={Aspect,1}
+		ModifyGraph/W=$plotName noLabel=2,axThick=0,standoff=0
+		ModifyGraph/W=$plotName margin=7
+	endfor
+End
+
+STATIC Function QuiltCalculator()
+	WAVE/Z/T labelWave = root:labelWave
+	Variable cond = numpnts(labelWave) // use labelWave rather than condWave for printing
+	Variable nCells= 0, leastCells = 10000
+	String w0Name
+	
+	Variable i
+	
+	for(i = 0; i < cond; i += 1)
+		w0Name = "cond" + num2str(i) + "_Img_Index"
+		Wave w0 = $w0Name
+		nCells = numpnts(w0)
+		Print labelWave[i], "has", nCells, "outlines"
+		leastCells = min(leastCells,nCells)
+	endfor
+	Variable qSize = floor(sqrt(leastCells))
+	Print "Smallest number of outlines is", leastCells
+	Print "Quilt of", qSize, "x", qSize
+	return qSize
 End
 
 // This function will make a "multicolumn" boxplot or violinplot (Igor >8 only) 
@@ -644,11 +760,13 @@ Function MakeColorWave(cond)
 	endfor
 End
 
-STATIC Function MakeTheLayouts(prefix,nRow,nCol,[iter, filtVar])
+STATIC Function MakeTheLayouts(prefix,nRow,nCol,[iter, filtVar, rev, saveIt])
 	String prefix
 	Variable nRow, nCol
 	Variable iter	// this is if we are doing multiple iterations of the same layout
 	Variable filtVar // this is the object we want to filter for
+	Variable rev // optional - reverse plot order
+	Variable saveIt
 	if(ParamIsDefault(filtVar) == 0)
 		String filtStr = prefix + "_*_" + num2str(filtVar) + "_*"	// this is if we want to filter for this string from the prefix
 	endif
@@ -679,7 +797,15 @@ STATIC Function MakeTheLayouts(prefix,nRow,nCol,[iter, filtVar])
 	Variable pgNum=1
 	
 	for(i = 0; i < nWindows; i += 1)
-		plotName = StringFromList(i,modList)
+		if(ParamIsDefault(rev) == 0)
+			if(rev == 1)
+				plotName = StringFromList(nWindows - 1 - i,modList)
+			else
+				plotName = StringFromList(i,modList)
+			endif
+		else
+			plotName = StringFromList(i,modList)
+		endif
 		AppendLayoutObject/W=$layoutName/PAGE=(pgnum) graph $plotName
 		if(mod((i + 1),PlotsPerPage) == 0 || i == (nWindows -1)) // if page is full or it's the last plot
 			LayoutPageAction/W=$layoutName size(-1)=(595, 842), margins(-1)=(18, 18, 18, 18)
@@ -693,16 +819,51 @@ STATIC Function MakeTheLayouts(prefix,nRow,nCol,[iter, filtVar])
 			endif
 		endif
 	endfor
+	
 	String fileName
+	// if anthing is passed here we save an iteration, otherwise usual name
 	if(!ParamIsDefault(iter))
 		fileName = layoutName + num2str(iter) + ".pdf"
 	else
 		fileName = layoutName + ".pdf"
 	endif
+	// if anthing is passed here we save the filtered version
 	if(ParamIsDefault(filtVar) == 0)
 		fileName = ReplaceString(".pdf",fileName, "_" + num2str(filtVar) + ".pdf")
 	endif
-	String folderStr
+	if(ParamIsDefault(saveIt) == 0)
+		if(saveIt == 1)
+			SavePICT/O/WIN=$layoutName/PGR=(1,-1)/E=-2/W=(0,0,0,0) as fileName
+		endif
+	else
+		// default is to save
+		SavePICT/O/WIN=$layoutName/PGR=(1,-1)/E=-2/W=(0,0,0,0) as fileName
+	endif
+End
+
+STATIC Function TidyAndSave(prefix)
+	String prefix
+	String layoutName = "all"+prefix+"Layout"
+	// go to first page
+	LayoutPageAction/W=$layoutName page=(1)
+	// build the key
+	WAVE/Z/T labelWave = root:labelWave
+	WAVE/Z colorWave = root:colorWave
+	Variable cond = numpnts(labelWave)
+	String boxString = ""
+	
+	Variable i
+	
+	for(i = 0; i < cond; i += 1)
+		// add text colour for condition
+		boxString += "\\K(" + num2str(colorWave[i][0]) + "," + num2str(colorWave[i][1]) + "," + num2str(colorWave[i][2])
+		boxString += ")" + labelWave[i]
+		if (i < cond - 1)
+			boxString += "\r"
+		endif
+	endfor
+	TextBox/W=$layoutName/C/N=text0/F=0/A=RB/X=5.00/Y=5.00 boxString
+	String fileName = layoutName + ".pdf"
 	SavePICT/O/WIN=$layoutName/PGR=(1,-1)/E=-2/W=(0,0,0,0) as fileName
 End
 
@@ -720,6 +881,18 @@ STATIC Function DecideOpacity(nTrace)
 	endif
 	alpha = round(65535 * alpha)
 	return alpha
+End
+
+// for axis scaling
+///	@param	value	this is the input value that requires rounding up
+///	@param	roundto	round to the nearest...
+STATIC Function RoundFunction(value,roundTo)
+	Variable value, roundTo
+	
+	value /= roundTo
+	Variable newVal = ceil(value)
+	newVal *= roundTo
+	return newVal
 End
 
 ////////////////////////////////////////////////////////////////////////
