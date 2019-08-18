@@ -249,13 +249,24 @@ STATIC Function FindEV(m1)
 End
 
 Function TakeMeasurements()
+	// full list of measurements:
+	//  MinAxis, MajAxis, Perimeter, Area
+	//  ConvexArea, Solidity, Extent
+	//  AreaROI, Symmetry
+	//  MaxFromCentre, MinFromCentre
+	//  AspectRatio (aka Eccentricity), Circularity, Circularity2
+	// Not computing irregularity measures
 	String wList = WaveList("c_cell_*",";","")
 	Variable nWaves = ItemsInList(wList)
 	Make/O/N=(nWaves) Img_MinAxis, Img_MajAxis, Img_Perimeter, Img_Area
+	Make/O/N=(nWaves) Img_ConvexArea, Img_Solidity, Img_Extent
+	Make/O/N=(nWaves) Img_AreaROI, Img_Symmetry
+	Make/O/N=(nWaves) Img_MaxFromCentre, Img_MinFromCentre
 	Make/O/N=(nWaves,2)/T Img_Label
 	String currentDF = GetDataFolder(0)
 	Img_label[][0] = currentDF
 	String wName
+	Variable BoundingBoxArea
 	
 	Variable i,j
 	
@@ -263,16 +274,37 @@ Function TakeMeasurements()
 		wName = StringFromList(i, wList)
 		Img_Label[i][1] = wName
 		Wave w0 = $wName
+		// MinAxis, MajAxis, Perimeter
 		Img_MinAxis[i] = VesicleAxisLength(w0,1)
 		Img_MajAxis[i] = VesicleAxisLength(w0,0)
 		Img_Perimeter[i] = FindLengthOfXYCoords(w0)
+		// Area
 		MatrixOp/O/FREE w0c0 = col(w0,0)
 		MatrixOp/O/FREE w0c1 = col(w0,1)
 		Img_Area[i] = PolygonArea(w0c0,w0c1)
+		// ConvexArea
+		ConvexHull/C w0c0,w0c1
+		WAVE/Z W_Xhull,W_Yhull
+		Img_ConvexArea[i] = PolygonArea(W_Xhull,W_Yhull)
+		KillWaves/Z W_Xhull, W_Yhull
+		// Solidity
+		Img_Solidity[i] = Img_Area[i] / Img_ConvexArea[i] // could do this by MatrixOp below
+		// Extent
+		BoundingBoxArea = (WaveMax(w0c0) - WaveMin(w0c0)) * (WaveMax(w0c1) - WaveMin(w0c1))
+		Img_Extent[i] = Img_Area[i] / BoundingBoxArea
+		// To calculate AreaROI and Symmetry we'll send the co-ords to a separate function
+		Wave resultW = SymmetryCalculator(w0c0,w0c1)
+		Img_AreaROI[i] = resultW[0]
+		Img_Symmetry[i] = resultW[1] / resultW[0]
+		// Max or Min from Centre
+		MatrixOp/O/FREE distanceW = sqrt(sumrows(w0 * w0))
+		Img_MaxFromCentre[i] = WaveMax(distanceW)
+		Img_MinFromCentre[i] = WaveMin(distanceW)
 	endfor
 	if(numpnts(Img_Area) > 0)
 		MatrixOp/O/NTHR=0 Img_AspectRatio = Img_MinAxis / Img_MajAxis
 		MatrixOp/O/NTHR=0 Img_Circularity = (4 * pi * Img_Area) / (Img_Perimeter * Img_Perimeter)
+		MatrixOp/O/NTHR=0 Img_Circularity2 = Img_Perimeter / (2 * sqrt(pi * Img_Area))
 	else
 		Print "No cells in", currentDF
 	endif
@@ -317,6 +349,79 @@ STATIC Function FindLengthOfXYCoords(m1)
 	return sum(tempNorm)
 End
 
+STATIC Function/WAVE SymmetryCalculator(xw,yw)
+	Wave xw,yw // 1d column of x and y coords of centered/rotated cell shape
+	Make/O/N=(2)/FREE resultW
+	// convert back to pixels
+	Variable pxSize = 0.227
+	xw /= pxSize
+	yw /= pxSize
+	Duplicate/O/FREE xw, xw1
+	Duplicate/O/FREE yw, yw1
+	xw1[] = abs(xw[p])
+	yw1[] = abs(yw[p])
+	Variable xOff = WaveMax(xw)
+	Variable yOff = WaveMax(yw)
+	// offset a copy of original coordinate set
+	xw1[] = xOff + xw[p]
+	yw1[] = yOff + yw[p]
+	// make a mask with value of 1
+	ImageBoundaryToMask width=(2 * xOff), height=(2 * yOff), xwave=xw1, ywave=yw1, seedX=xOff,seedY=yOff
+	WAVE/Z M_ROIMask
+	// store integer representation of ROI
+	resultW[0] = sum(M_ROIMask)
+	
+	// now make the two mirror image images
+	// cordinates of one side (Up or down)
+	Duplicate/O/FREE xw,xwUp,xWDown
+	Duplicate/O/FREE yw,ywUp,yWDown
+	xwUp[][] = (yw[p] >=0) ? xw[p] : NaN
+	ywUp[][] = (yw[p] >=0) ? yw[p] : NaN
+	xwDown[][] = (yw[p] <=0) ? xw[p] : NaN
+	ywDown[][] = (yw[p] <=0) ? yw[p] : NaN
+	// zap the nans and sort by X-coordinate
+	WaveTransform zapnans xwUp
+	WaveTransform zapnans ywUp
+	WaveTransform zapnans xwDown
+	WaveTransform zapnans ywDown
+	Sort/R xwUp, xwUp,ywUp
+	Sort/R xwDown, xwDown,ywDown
+	// create mirrored side
+	Duplicate/O/FREE xwUp,xwUpM
+	Duplicate/O/FREE ywUp,ywUpM
+	Duplicate/O/FREE xwDown,xwDownM
+	Duplicate/O/FREE ywDown,ywDownM
+	// Join both sides and close
+	Concatenate/O/NP=0 {xwUp,xwUpM}, xwUpAll
+	Concatenate/O/NP=0 {ywUp,ywUpM}, ywUpAll
+	Concatenate/O/NP=0 {xwDown,xwDownM}, xwDownAll
+	Concatenate/O/NP=0 {ywDown,ywDownM}, ywDownAll
+	InsertPoints numpnts(xwUpAll),1, xwUpAll,ywUpAll
+	xwUpAll[numpnts(xwUpAll) - 1] = xwUpAll[0]
+	ywUpAll[numpnts(ywUpAll) - 1] = ywUpAll[0]
+	InsertPoints numpnts(xwDownAll),1, xwDownAll,ywDownAll
+	xwDownAll[numpnts(xwDownAll) - 1] = xwDownAll[0]
+	ywDownAll[numpnts(ywDownAll) - 1] = ywDownAll[0]
+	xwUpAll += xOff
+	ywUpAll += yOff
+	xwDownAll += xOff
+	ywDownAll += yOff
+	// Make the first mask
+	// Originally I used the origin (offset) as the seed pixel but this failed in some cases
+	ImageBoundaryToMask width=(2 * xOff), height=(2 * yOff), xwave=xwUpAll, ywave=ywUpAll, seedX=xOff,seedY=yOff
+	Duplicate/O/FREE M_ROIMask, upMask
+	// and the second
+	ImageBoundaryToMask width=(2 * xOff), height=(2 * yOff), xwave=xwDownAll, ywave=ywDownAll, seedX=xOff,seedY=yOff
+	Duplicate/O/FREE M_ROIMask, downMask
+	// Intersection will be 2
+	MatrixOp/O MirrorResult = upMask + downMask
+	MirrorResult[][] = (MirrorResult[p][q] == 2) ? 1 : 0
+	resultW[1] = sum(MirrorResult) // this is the area not the ratio
+	// convert result back to sq pixels
+	resultW[] *= pxSize ^ 2
+	return resultW
+End
+
 STATIC Function CollectAllMeasurements()
 	SetDataFolder root:data:	// relies on earlier load
 	DFREF dfr = GetDataFolderDFR()
@@ -333,6 +438,7 @@ STATIC Function CollectAllMeasurements()
 	
 	// we need to concatenate these waves into root (p_all_*)
 	String targetWaveList = "Img_MinAxis;Img_MajAxis;Img_Perimeter;Img_Area;Img_Label;Img_AspectRatio;Img_Circularity;"
+	targetWaveList += "Img_ConvexArea;Img_Solidity;Img_Extent;Img_AreaROI;Img_Symmetry;Img_MaxFromCentre;Img_MinFromCentre;"
 	Variable nTargets = ItemsInList(targetWaveList)
 	String targetName, tList, conName
 	
@@ -402,6 +508,7 @@ Function ProcessAllConditions()
 	
 	// now we have these waves let's make the versions with the results
 	String targetWaveList = "Img_MinAxis;Img_MajAxis;Img_Perimeter;Img_Area;Img_AspectRatio;Img_Circularity;"
+	targetWaveList += "Img_ConvexArea;Img_Solidity;Img_Extent;Img_AreaROI;Img_Symmetry;Img_MaxFromCentre;Img_MinFromCentre;"
 	Variable nTargets = ItemsInList(targetWaveList)
 	String w1Name, tName,w2Name
 	Variable nRows
