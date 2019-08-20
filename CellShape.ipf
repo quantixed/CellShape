@@ -30,7 +30,7 @@ Function TheLoader()
 	ProcessAllConditions()
 	ImageQuilt()
 	MakeTheLayouts("p",5,3, rev = 1, saveIt = 0)
-	MakeTheLayouts("quilt",4,3, rev = 1, saveIt = 0)
+	MakeTheLayouts("quilt",1,2, rev = 1, saveIt = 0, orient = 1) // landscape
 	TidyAndSave("p")
 	TidyAndSave("quilt")
 End
@@ -179,7 +179,7 @@ STATIC Function MakeCellggPlot(w0, [plusMinus])
 	KillWindow/Z $plotname
 	Display/N=$plotName/HIDE=1 w0[][1]/TN=Outline0 vs w0[][0]
 	ModifyGraph/W=$plotName rgb(Outline0)=(68*257,170*257,153*257)
-	ModifyGraph/W=$plotName width={Aspect,1}
+	ModifyGraph/W=$plotName height={Aspect,1}
 	// now work out how to display the image
 	if(ParamIsDefault(plusMinus) == 1)
 		Variable last2 = dimSize(w0,0)
@@ -360,13 +360,17 @@ STATIC Function/WAVE SymmetryCalculator(xw,yw)
 	Duplicate/O/FREE yw, yw1
 	xw1[] = abs(xw[p])
 	yw1[] = abs(yw[p])
-	Variable xOff = WaveMax(xw)
-	Variable yOff = WaveMax(yw)
+	Variable xOff = WaveMax(xw1)
+	Variable yOff = WaveMax(yw1)
 	// offset a copy of original coordinate set
 	xw1[] = xOff + xw[p]
 	yw1[] = yOff + yw[p]
+	Wave seedW = FindTheSeed(xw1,yw1,xOff,yOff)
+	Variable seedXLoc = seedW[0]
+	Variable seedYLoc = seedW[1]
 	// make a mask with value of 1
-	ImageBoundaryToMask width=(2 * xOff), height=(2 * yOff), xwave=xw1, ywave=yw1, seedX=xOff,seedY=yOff
+	// Originally I used the origin (offset) as the seed pixel but this failed in some cases
+	ImageBoundaryToMask width=(2 * xOff), height=(2 * yOff), xwave=xw1, ywave=yw1, seedX=seedXLoc,seedY=seedYLoc
 	WAVE/Z M_ROIMask
 	// store integer representation of ROI
 	resultW[0] = sum(M_ROIMask)
@@ -407,11 +411,17 @@ STATIC Function/WAVE SymmetryCalculator(xw,yw)
 	xwDownAll += xOff
 	ywDownAll += yOff
 	// Make the first mask
+	Wave seedW = FindTheSeed(xwUpAll,ywUpAll,xOff,yOff)
+	seedXLoc = seedW[0]
+	seedYLoc = seedW[1]
 	// Originally I used the origin (offset) as the seed pixel but this failed in some cases
-	ImageBoundaryToMask width=(2 * xOff), height=(2 * yOff), xwave=xwUpAll, ywave=ywUpAll, seedX=xOff,seedY=yOff
+	ImageBoundaryToMask width=(2 * xOff), height=(2 * yOff), xwave=xwUpAll, ywave=ywUpAll, seedX=seedXLoc,seedY=seedYLoc
 	Duplicate/O/FREE M_ROIMask, upMask
 	// and the second
-	ImageBoundaryToMask width=(2 * xOff), height=(2 * yOff), xwave=xwDownAll, ywave=ywDownAll, seedX=xOff,seedY=yOff
+	Wave seedW = FindTheSeed(xwDownAll,ywDownAll,xOff,yOff)
+	seedXLoc = seedW[0]
+	seedYLoc = seedW[1]
+	ImageBoundaryToMask width=(2 * xOff), height=(2 * yOff), xwave=xwDownAll, ywave=ywDownAll, seedX=seedXLoc,seedY=seedYLoc
 	Duplicate/O/FREE M_ROIMask, downMask
 	// Intersection will be 2
 	MatrixOp/O MirrorResult = upMask + downMask
@@ -419,7 +429,28 @@ STATIC Function/WAVE SymmetryCalculator(xw,yw)
 	resultW[1] = sum(MirrorResult) // this is the area not the ratio
 	// convert result back to sq pixels
 	resultW[] *= pxSize ^ 2
+	
 	return resultW
+End
+
+STATIC Function/WAVE FindTheSeed(xw,yw,xc,yc)
+	Wave xw,yw // x and y coords of centred and rotated cell shape (in pixel units and offset)
+	Variable xc,yc // the origin, offset
+	Make/O/N=(2)/FREE seedLocW
+	
+	FindLevels/DEST=crossingW/P/Q xw, xc
+	if(V_flag == 2)
+		Print "Couldn't find seed"
+	endif
+	if(mod(V_LevelsFound,2) == 1)
+		Print "Seed cannot be placed at x=0"
+	else
+		// find the point
+		seedLocW[0] = (xw(crossingW[0]) + xw(crossingW[1])) / 2
+		seedLocW[1] = (yw(crossingW[0]) + yw(crossingW[1])) / 2
+	endif
+	
+	return seedLocW
 End
 
 STATIC Function CollectAllMeasurements()
@@ -560,6 +591,13 @@ Function ProcessAllConditions()
 	Label/W=p_Img_majAxis left "Major axis (\u03BCm)"
 	Label/W=p_Img_AspectRatio left "Aspect Ratio"
 	Label/W=p_Img_Circularity left "Circularity"
+	Label/W=p_Img_ConvexArea left "Convex area (\u03BCm\S2\M)"
+	Label/W=p_Img_Solidity left "Solidity"
+	Label/W=p_Img_Extent left "Extent"
+	Label/W=p_Img_AreaROI left "Mask area (\u03BCm\S2\M)"
+	Label/W=p_Img_Symmetry left "Symmetry"
+	Label/W=p_Img_MaxFromCentre left "Max from centre (\u03BCm)"
+	Label/W=p_Img_MinFromCentre left "Max from centre (\u03BCm)"
 	
 	// Look at maj/minor axes on a plot
 	plotName = "p_Img_Axes"
@@ -584,7 +622,7 @@ Function ProcessAllConditions()
 	SetAxis/W=$plotName left 0,maxVal
 	SetAxis/W=$plotName bottom 0,maxVal
 	ModifyGraph/W=$plotName mode=3,marker=19
-	ModifyGraph/W=$plotName width={Aspect,1}
+	ModifyGraph/W=$plotName height={Aspect,1}
 	Label/W=$plotName left "Minor axis (\u03BCm)"
 	Label/W=$plotName bottom "Major axis (\u03BCm)"
 End
@@ -648,12 +686,12 @@ Function ImageQuilt()
 		plotName = "quilt_cond" + num2str(i) + "_sample"
 		for(j = 0; j < qSize^2; j += 1)
 			tName = "outL" + num2str(j)
-			ModifyGraph/W=$plotName offset($tName)={(mod(j,7) + 1) * biggestVal,(floor(j / 7) + 1) * biggestVal}
+			ModifyGraph/W=$plotName offset($tName)={(mod(j,qSize) + 1) * biggestVal,(floor(j / qSize) + 1) * biggestVal}
 		endfor
 		ModifyGraph/W=$plotName rgb=(colorWave[i][0],colorWave[i][1],colorWave[i][2])
 		SetAxis/W=$plotName left maxVal,0
 		SetAxis/W=$plotName bottom 0, maxVal
-		ModifyGraph/W=$plotName width={Aspect,1}
+		ModifyGraph/W=$plotName height={Aspect,1}
 		ModifyGraph/W=$plotName noLabel=2,axThick=0,standoff=0
 		ModifyGraph/W=$plotName margin=7
 	endfor
@@ -867,13 +905,14 @@ Function MakeColorWave(cond)
 	endfor
 End
 
-STATIC Function MakeTheLayouts(prefix,nRow,nCol,[iter, filtVar, rev, saveIt])
+STATIC Function MakeTheLayouts(prefix,nRow,nCol,[iter, filtVar, rev, saveIt, orient])
 	String prefix
 	Variable nRow, nCol
 	Variable iter	// this is if we are doing multiple iterations of the same layout
 	Variable filtVar // this is the object we want to filter for
 	Variable rev // optional - reverse plot order
 	Variable saveIt
+	Variable orient //optional 1 = landscape, 0 or default is portrait
 	if(ParamIsDefault(filtVar) == 0)
 		String filtStr = prefix + "_*_" + num2str(filtVar) + "_*"	// this is if we want to filter for this string from the prefix
 	endif
@@ -915,7 +954,14 @@ STATIC Function MakeTheLayouts(prefix,nRow,nCol,[iter, filtVar, rev, saveIt])
 		endif
 		AppendLayoutObject/W=$layoutName/PAGE=(pgnum) graph $plotName
 		if(mod((i + 1),PlotsPerPage) == 0 || i == (nWindows -1)) // if page is full or it's the last plot
-			LayoutPageAction/W=$layoutName size(-1)=(595, 842), margins(-1)=(18, 18, 18, 18)
+			if(ParamIsDefault(orient) == 0)
+				if(orient == 1)
+					LayoutPageAction size(-1)=(842,595), margins(-1)=(18, 18, 18, 18)
+				endif
+			else
+				// default is for portrait
+				LayoutPageAction/W=$layoutName size(-1)=(595, 842), margins(-1)=(18, 18, 18, 18)
+			endif
 			ModifyLayout/W=$layoutName units=0
 			ModifyLayout/W=$layoutName frame=0,trans=1
 			Execute /Q exString
