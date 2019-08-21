@@ -6,6 +6,9 @@
 // GFP_Tub_X_Y and GFP_X_Y will cause problems.
 // Must be "UniqueAlnum"_X_Y for the code to run in current state.
 
+// Known problem: for some outlines, we get a bad pixel specification error
+// I *think* the way to fix this is to get rid of crossovers in the outlines
+
 ////////////////////////////////////////////////////////////////////////
 // Menu items
 ////////////////////////////////////////////////////////////////////////
@@ -351,7 +354,7 @@ End
 
 STATIC Function/WAVE SymmetryCalculator(xw,yw)
 	Wave xw,yw // 1d column of x and y coords of centered/rotated cell shape
-	Make/O/N=(2)/FREE resultW
+	Make/O/N=(2)/FREE resultW = 0
 	// convert back to pixels
 	Variable pxSize = 0.227
 	xw /= pxSize
@@ -366,63 +369,29 @@ STATIC Function/WAVE SymmetryCalculator(xw,yw)
 	xw1[] = xOff + xw[p]
 	yw1[] = yOff + yw[p]
 	Wave seedW = FindTheSeed(xw1,yw1,xOff,yOff)
-	Variable seedXLoc = seedW[0]
-	Variable seedYLoc = seedW[1]
+	Variable seedXLoc = floor(seedW[0])
+	Variable seedYLoc = floor(seedW[1])
+		if(seedXLoc + seedYLoc == 0)
+			return resultW
+		endif
 	// make a mask with value of 1
-	// Originally I used the origin (offset) as the seed pixel but this failed in some cases
 	ImageBoundaryToMask width=(2 * xOff), height=(2 * yOff), xwave=xw1, ywave=yw1, seedX=seedXLoc,seedY=seedYLoc
 	WAVE/Z M_ROIMask
 	// store integer representation of ROI
 	resultW[0] = sum(M_ROIMask)
+	// The resulting image is ceil(requestedSize) - 1
 	
 	// now make the two mirror image images
-	// cordinates of one side (Up or down)
-	Duplicate/O/FREE xw,xwUp,xWDown
-	Duplicate/O/FREE yw,ywUp,yWDown
-	xwUp[][] = (yw[p] >=0) ? xw[p] : NaN
-	ywUp[][] = (yw[p] >=0) ? yw[p] : NaN
-	xwDown[][] = (yw[p] <=0) ? xw[p] : NaN
-	ywDown[][] = (yw[p] <=0) ? yw[p] : NaN
-	// zap the nans and sort by X-coordinate
-	WaveTransform zapnans xwUp
-	WaveTransform zapnans ywUp
-	WaveTransform zapnans xwDown
-	WaveTransform zapnans ywDown
-	Sort/R xwUp, xwUp,ywUp
-	Sort/R xwDown, xwDown,ywDown
-	// create mirrored side
-	Duplicate/O/FREE xwUp,xwUpM
-	Duplicate/O/FREE ywUp,ywUpM
-	Duplicate/O/FREE xwDown,xwDownM
-	Duplicate/O/FREE ywDown,ywDownM
-	// Join both sides and close
-	Concatenate/O/NP=0 {xwUp,xwUpM}, xwUpAll
-	Concatenate/O/NP=0 {ywUp,ywUpM}, ywUpAll
-	Concatenate/O/NP=0 {xwDown,xwDownM}, xwDownAll
-	Concatenate/O/NP=0 {ywDown,ywDownM}, ywDownAll
-	InsertPoints numpnts(xwUpAll),1, xwUpAll,ywUpAll
-	xwUpAll[numpnts(xwUpAll) - 1] = xwUpAll[0]
-	ywUpAll[numpnts(ywUpAll) - 1] = ywUpAll[0]
-	InsertPoints numpnts(xwDownAll),1, xwDownAll,ywDownAll
-	xwDownAll[numpnts(xwDownAll) - 1] = xwDownAll[0]
-	ywDownAll[numpnts(ywDownAll) - 1] = ywDownAll[0]
-	xwUpAll += xOff
-	ywUpAll += yOff
-	xwDownAll += xOff
-	ywDownAll += yOff
-	// Make the first mask
-	Wave seedW = FindTheSeed(xwUpAll,ywUpAll,xOff,yOff)
-	seedXLoc = seedW[0]
-	seedYLoc = seedW[1]
-	// Originally I used the origin (offset) as the seed pixel but this failed in some cases
-	ImageBoundaryToMask width=(2 * xOff), height=(2 * yOff), xwave=xwUpAll, ywave=ywUpAll, seedX=seedXLoc,seedY=seedYLoc
-	Duplicate/O/FREE M_ROIMask, upMask
-	// and the second
-	Wave seedW = FindTheSeed(xwDownAll,ywDownAll,xOff,yOff)
-	seedXLoc = seedW[0]
-	seedYLoc = seedW[1]
-	ImageBoundaryToMask width=(2 * xOff), height=(2 * yOff), xwave=xwDownAll, ywave=ywDownAll, seedX=seedXLoc,seedY=seedYLoc
-	Duplicate/O/FREE M_ROIMask, downMask
+	Duplicate/O/FREE M_ROIMask, upMask, downMask
+	// Do the mirroring. If even, the image has duplicated middle rows. If odd, the new image will not
+	Variable nCol = DimSize(M_ROIMask,1) // the height of the image
+	if(mod(nCol,2) == 0)
+		upMask[][nCol / 2,nCol - 1] = M_ROIMask[p][nCol - q - 1]
+		downMask[][0,nCol / 2 - 1] = M_ROIMask[p][nCol - 1 - q]
+	else
+		upMask[][(nCol + 1) / 2 , nCol - 1] = M_ROIMask[p][nCol - q - 1]
+		downMask[][0,(nCol - 1) / 2 - 1] = M_ROIMask[p][nCol - 1 - q]
+	endif
 	// Intersection will be 2
 	MatrixOp/O MirrorResult = upMask + downMask
 	MirrorResult[][] = (MirrorResult[p][q] == 2) ? 1 : 0
@@ -436,19 +405,50 @@ End
 STATIC Function/WAVE FindTheSeed(xw,yw,xc,yc)
 	Wave xw,yw // x and y coords of centred and rotated cell shape (in pixel units and offset)
 	Variable xc,yc // the origin, offset
-	Make/O/N=(2)/FREE seedLocW
 	
+	Make/O/N=(2)/FREE seedLocW = 0
+	Variable theXSeed, theYSeed
 	FindLevels/DEST=crossingW/P/Q xw, xc
+	
 	if(V_flag == 2)
 		Print "Couldn't find seed"
-	endif
-	if(mod(V_LevelsFound,2) == 1)
+		return seedLocW
+	elseif(mod(V_LevelsFound,2) == 1)
 		Print "Seed cannot be placed at x=0"
-	else
-		// find the point
-		seedLocW[0] = (xw(crossingW[0]) + xw(crossingW[1])) / 2
-		seedLocW[1] = (yw(crossingW[0]) + yw(crossingW[1])) / 2
+		return seedLocW
 	endif
+	
+	// find the point - needs to have a gap bigger than 2 in y
+	if(abs(yw(crossingW[0]) - yw(crossingW[1])) > 2)
+		theXSeed = (xw(crossingW[0]) + xw(crossingW[1])) / 2
+		theYSeed = (yw(crossingW[0]) + yw(crossingW[1])) / 2
+	elseif(V_LevelsFound > 2 && abs(yw(crossingW[2]) - yw(crossingW[3])) > 2)
+		theXSeed = (xw(crossingW[2]) + xw(crossingW[3])) / 2
+		theYSeed = (yw(crossingW[2]) + yw(crossingW[3])) / 2
+	else
+		FindLevels/DEST=crossingW/P/Q yw, yc
+		if(V_flag == 2)
+			Print "Couldn't find seed"
+			return seedLocW
+		elseif(mod(V_LevelsFound,2) == 1)
+			Print "Seed cannot be placed at x=0"
+			return seedLocW
+		endif
+		// find the point
+		if(abs(xw(crossingW[0]) - xw(crossingW[1])) > 2)
+			theXSeed = (xw(crossingW[0]) + xw(crossingW[1])) / 2
+			theYSeed = (yw(crossingW[0]) + yw(crossingW[1])) / 2
+		elseif(V_LevelsFound > 2 && abs(xw(crossingW[2]) - xw(crossingW[3])) > 2)
+			theXSeed = (xw(crossingW[2]) + xw(crossingW[3])) / 2
+			theYSeed = (yw(crossingW[2]) + yw(crossingW[3])) / 2
+		else
+			Print "Couldn't place a seed"
+		endif
+	endif
+	// if there is still a bad pixel seed specification error need to search other locations
+	
+	seedLocW[0] = theXSeed
+	seedLocW[1] = theYSeed
 	
 	return seedLocW
 End
