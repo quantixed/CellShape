@@ -126,9 +126,84 @@ Function MakeObjectContourWaves()
 			if(DimSize(cW,0) < 4)
 				KillWaves cW
 			endif
+			// "rethread" the contour - i.e. get rid of crossovers
+			Rethreader(cW)
 		endfor
 	endfor
 	KillWaves/Z filtObj,UniqueContours,MatA
+End
+
+// series of functions to rethread a contour, i.e. get rid of crossovers
+Function Rethreader(w0)
+	Wave w0
+	String wName = NameOfWave(w0) + "_untangle"
+	Duplicate/O w0, $wName
+	Wave w1 = $wName
+	Variable ok = 1
+	do
+		ok = CrossoverCheck(w1)
+	while(ok == 1)
+End
+
+STATIC Function CrossoverCheck(w)
+	Wave w
+	Variable nRow = DimSize(w,0)
+	Variable xA,xB,xC,xD
+	Variable yA,yB,yC,yD
+	Variable t1,t2
+	
+	Variable i,j
+	
+	for(i = 0; i < (nRow - 2); i += 1)
+		xA = w[i][0]
+		yA = w[i][1]
+		xB = w[i + 1][0]
+		yB = w[i + 1][1]
+		for(j = i + 2; j < (nRow - 1); j += 1)
+			xC = w[j][0]
+			yC = w[j][1]
+			xD = w[j + 1][0]
+			yD = w[j + 1][1]
+			t1 = ((yC - yD) * (xA - xC) + (xD - xC) * (yA - yC)) / ((xD - xC) * (yA - yB) - (xA - xB) * (yD - yC))
+			t2 = ((yA - yB) * (xA - xC) + (xB - xA) * (yA - yC)) / ((xD - xC) * (yA - yB) - (xA - xB) * (yD - yC))
+			if(t1 >= 0 && t1 <= 1 && t2 >= 0 && t2 <= 1)
+//				Print "crossover", i, j
+				Rethread(w,i,j)
+				DeleteDuplicatePoints(w)
+				return 1
+			endif
+		endfor
+	endfor
+	return 0
+End
+
+STATIC Function Rethread(w,i,j)
+	Wave w
+	Variable i, j
+	Duplicate/O/FREE w, tempW
+	Make/O/N=(DimSize(w,0))/FREE orderW = p
+	orderW[i+1,j] = j + (i + 1 - p)
+	w[][] = tempW[orderW[p]][q]
+End
+
+STATIC Function DeleteDuplicatePoints(w)
+	Wave w
+	String wName = NameOfWave(w)
+	MatrixOp/O/FREE freeCol0 = col(w,0)
+	MatrixOp/O/FREE freeCol1 = col(w,1)
+	// find the forward difference
+	Differentiate/METH=2 freeCol0/D=newCol0
+	Differentiate/METH=2 freeCol1/D=newCol1
+	// first point is garbage, so make sure it is not 0
+	newCol0[0] = 1
+	// replace instances where there was no change in x or y with NaN
+	freeCol0[] = (newCol0[p] == 0 && newCol1[p] == 0) ? NaN : freeCol0[p]
+	freeCol1[] = (newCol0[p] == 0 && newCol1[p] == 0) ? NaN : freeCol1[p]
+	// get rid of NaNs
+	WaveTransform zapnans freeCol0
+	WaveTransform zapnans freeCol1
+	// Put wave back together
+	Concatenate/O/KILL {freeCol0,freeCol1}, $wName
 End
 
 // this function goes into each datafolder and run some code on the contours in there
@@ -582,6 +657,7 @@ Function ProcessAllConditions()
 		endfor
 		SetAxis/A/N=1/E=1/W=$plotName left
 		ModifyGraph/W=$plotName toMode=-1
+		ModifyGraph/W=$plotName margin(left)=40
 	endfor
 	
 	// Label y-axes
