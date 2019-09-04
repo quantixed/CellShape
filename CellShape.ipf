@@ -126,84 +126,9 @@ Function MakeObjectContourWaves()
 			if(DimSize(cW,0) < 4)
 				KillWaves cW
 			endif
-			// "rethread" the contour - i.e. get rid of crossovers
-			Rethreader(cW)
 		endfor
 	endfor
 	KillWaves/Z filtObj,UniqueContours,MatA
-End
-
-// series of functions to rethread a contour, i.e. get rid of crossovers
-Function Rethreader(w0)
-	Wave w0
-	String wName = NameOfWave(w0) + "_untangle"
-	Duplicate/O w0, $wName
-	Wave w1 = $wName
-	Variable ok = 1
-	do
-		ok = CrossoverCheck(w1)
-	while(ok == 1)
-End
-
-STATIC Function CrossoverCheck(w)
-	Wave w
-	Variable nRow = DimSize(w,0)
-	Variable xA,xB,xC,xD
-	Variable yA,yB,yC,yD
-	Variable t1,t2
-	
-	Variable i,j
-	
-	for(i = 0; i < (nRow - 2); i += 1)
-		xA = w[i][0]
-		yA = w[i][1]
-		xB = w[i + 1][0]
-		yB = w[i + 1][1]
-		for(j = i + 2; j < (nRow - 1); j += 1)
-			xC = w[j][0]
-			yC = w[j][1]
-			xD = w[j + 1][0]
-			yD = w[j + 1][1]
-			t1 = ((yC - yD) * (xA - xC) + (xD - xC) * (yA - yC)) / ((xD - xC) * (yA - yB) - (xA - xB) * (yD - yC))
-			t2 = ((yA - yB) * (xA - xC) + (xB - xA) * (yA - yC)) / ((xD - xC) * (yA - yB) - (xA - xB) * (yD - yC))
-			if(t1 >= 0 && t1 <= 1 && t2 >= 0 && t2 <= 1)
-//				Print "crossover", i, j
-				Rethread(w,i,j)
-				DeleteDuplicatePoints(w)
-				return 1
-			endif
-		endfor
-	endfor
-	return 0
-End
-
-STATIC Function Rethread(w,i,j)
-	Wave w
-	Variable i, j
-	Duplicate/O/FREE w, tempW
-	Make/O/N=(DimSize(w,0))/FREE orderW = p
-	orderW[i+1,j] = j + (i + 1 - p)
-	w[][] = tempW[orderW[p]][q]
-End
-
-STATIC Function DeleteDuplicatePoints(w)
-	Wave w
-	String wName = NameOfWave(w)
-	MatrixOp/O/FREE freeCol0 = col(w,0)
-	MatrixOp/O/FREE freeCol1 = col(w,1)
-	// find the forward difference
-	Differentiate/METH=2 freeCol0/D=newCol0
-	Differentiate/METH=2 freeCol1/D=newCol1
-	// first point is garbage, so make sure it is not 0
-	newCol0[0] = 1
-	// replace instances where there was no change in x or y with NaN
-	freeCol0[] = (newCol0[p] == 0 && newCol1[p] == 0) ? NaN : freeCol0[p]
-	freeCol1[] = (newCol0[p] == 0 && newCol1[p] == 0) ? NaN : freeCol1[p]
-	// get rid of NaNs
-	WaveTransform zapnans freeCol0
-	WaveTransform zapnans freeCol1
-	// Put wave back together
-	Concatenate/O/KILL {freeCol0,freeCol1}, $wName
 End
 
 // this function goes into each datafolder and run some code on the contours in there
@@ -430,7 +355,7 @@ End
 STATIC Function/WAVE SymmetryCalculator(xw,yw)
 	Wave xw,yw // 1d column of x and y coords of centered/rotated cell shape
 	Make/O/N=(2)/FREE resultW = 0
-	// convert back to pixels
+	// convert back to pixels (hard-coded)
 	Variable pxSize = 0.227
 	xw /= pxSize
 	yw /= pxSize
@@ -443,29 +368,24 @@ STATIC Function/WAVE SymmetryCalculator(xw,yw)
 	// offset a copy of original coordinate set
 	xw1[] = xOff + xw[p]
 	yw1[] = yOff + yw[p]
-	Wave seedW = FindTheSeed(xw1,yw1,xOff,yOff)
-	Variable seedXLoc = floor(seedW[0])
-	Variable seedYLoc = floor(seedW[1])
-		if(seedXLoc + seedYLoc == 0)
-			return resultW
-		endif
+
 	// make a mask with value of 1
-	ImageBoundaryToMask width=(2 * xOff), height=(2 * yOff), xwave=xw1, ywave=yw1, seedX=seedXLoc,seedY=seedYLoc
-	WAVE/Z M_ROIMask
+	Wave maskMat = GenerateTheMask(2 * xOff, 2 * yOff, xw1, yw1)
+
 	// store integer representation of ROI
-	resultW[0] = sum(M_ROIMask)
+	resultW[0] = sum(maskMat)
 	// The resulting image is ceil(requestedSize) - 1
 	
 	// now make the two mirror image images
-	Duplicate/O/FREE M_ROIMask, upMask, downMask
+	Duplicate/O/FREE maskMat, upMask, downMask
 	// Do the mirroring. If even, the image has duplicated middle rows. If odd, the new image will not
-	Variable nCol = DimSize(M_ROIMask,1) // the height of the image
+	Variable nCol = DimSize(maskMat,1) // the height of the image
 	if(mod(nCol,2) == 0)
-		upMask[][nCol / 2,nCol - 1] = M_ROIMask[p][nCol - q - 1]
-		downMask[][0,nCol / 2 - 1] = M_ROIMask[p][nCol - 1 - q]
+		upMask[][nCol / 2,nCol - 1] = maskMat[p][nCol - q - 1]
+		downMask[][0,nCol / 2 - 1] = maskMat[p][nCol - 1 - q]
 	else
-		upMask[][(nCol + 1) / 2 , nCol - 1] = M_ROIMask[p][nCol - q - 1]
-		downMask[][0,(nCol - 1) / 2 - 1] = M_ROIMask[p][nCol - 1 - q]
+		upMask[][(nCol + 1) / 2 , nCol - 1] = maskMat[p][nCol - q - 1]
+		downMask[][0,(nCol - 1) / 2 - 1] = maskMat[p][nCol - 1 - q]
 	endif
 	// Intersection will be 2
 	MatrixOp/O MirrorResult = upMask + downMask
@@ -473,59 +393,28 @@ STATIC Function/WAVE SymmetryCalculator(xw,yw)
 	resultW[1] = sum(MirrorResult) // this is the area not the ratio
 	// convert result back to sq pixels
 	resultW[] *= pxSize ^ 2
-	
+	KillWaves/Z maskMat
 	return resultW
 End
 
-STATIC Function/WAVE FindTheSeed(xw,yw,xc,yc)
-	Wave xw,yw // x and y coords of centred and rotated cell shape (in pixel units and offset)
-	Variable xc,yc // the origin, offset
+STATIC Function/WAVE GenerateTheMask(ww,hh,xw,yw)
+	Variable ww, hh
+	Wave xw, yw
+	// make an image of boundary (background is 0, boundary is 255)
+	ImageBoundaryToMask width=ww, height=hh, xwave=xw, ywave=yw
+	WAVE/Z M_ROIMask
+	Duplicate/O/FREE M_ROIMask, boundMat
+	// make an image with background and boundary filled with 1, interior of ROI is 0
+	ImageBoundaryToMask width=ww, height=hh, xwave=xw, ywave=yw, seedX=1, seedY=1
+	Duplicate/O/FREE M_ROIMask, outFill, combineMat
+	// convert background to grey
+	combineMat[][] = (outFill[p][q] == 1 && boundMat[p][q] == 0) ? 127 : 0
+	// make the ROI and boundary 1
+	combineMat[][] = ((outFill[p][q] == 0 && boundMat[p][q] == 255) || outFill[p][q] == 0 && boundMat[p][q] == 0) ? 1 : combineMat[p][q]
+	// now eliminate the background
+	combineMat[][] = (combineMat[p][q] == 127) ? 0 : combineMat[p][q]
 	
-	Make/O/N=(2)/FREE seedLocW = 0
-	Variable theXSeed, theYSeed
-	FindLevels/DEST=crossingW/P/Q xw, xc
-	
-	if(V_flag == 2)
-		Print "Couldn't find seed"
-		return seedLocW
-	elseif(mod(V_LevelsFound,2) == 1)
-		Print "Seed cannot be placed at x=0"
-		return seedLocW
-	endif
-	
-	// find the point - needs to have a gap bigger than 2 in y
-	if(abs(yw(crossingW[0]) - yw(crossingW[1])) > 2)
-		theXSeed = (xw(crossingW[0]) + xw(crossingW[1])) / 2
-		theYSeed = (yw(crossingW[0]) + yw(crossingW[1])) / 2
-	elseif(V_LevelsFound > 2 && abs(yw(crossingW[2]) - yw(crossingW[3])) > 2)
-		theXSeed = (xw(crossingW[2]) + xw(crossingW[3])) / 2
-		theYSeed = (yw(crossingW[2]) + yw(crossingW[3])) / 2
-	else
-		FindLevels/DEST=crossingW/P/Q yw, yc
-		if(V_flag == 2)
-			Print "Couldn't find seed"
-			return seedLocW
-		elseif(mod(V_LevelsFound,2) == 1)
-			Print "Seed cannot be placed at x=0"
-			return seedLocW
-		endif
-		// find the point
-		if(abs(xw(crossingW[0]) - xw(crossingW[1])) > 2)
-			theXSeed = (xw(crossingW[0]) + xw(crossingW[1])) / 2
-			theYSeed = (yw(crossingW[0]) + yw(crossingW[1])) / 2
-		elseif(V_LevelsFound > 2 && abs(xw(crossingW[2]) - xw(crossingW[3])) > 2)
-			theXSeed = (xw(crossingW[2]) + xw(crossingW[3])) / 2
-			theYSeed = (yw(crossingW[2]) + yw(crossingW[3])) / 2
-		else
-			Print "Couldn't place a seed"
-		endif
-	endif
-	// if there is still a bad pixel seed specification error need to search other locations
-	
-	seedLocW[0] = theXSeed
-	seedLocW[1] = theYSeed
-	
-	return seedLocW
+	return combineMat
 End
 
 STATIC Function CollectAllMeasurements()
