@@ -6,9 +6,6 @@
 // GFP_Tub_X_Y and GFP_X_Y will cause problems.
 // Must be "UniqueAlnum"_X_Y for the code to run in current state.
 
-// Known problem: for some outlines, we get a bad pixel specification error
-// I *think* the way to fix this is to get rid of crossovers in the outlines
-
 ////////////////////////////////////////////////////////////////////////
 // Menu items
 ////////////////////////////////////////////////////////////////////////
@@ -359,12 +356,15 @@ STATIC Function/WAVE SymmetryCalculator(xw,yw)
 	Variable pxSize = 0.227
 	xw /= pxSize
 	yw /= pxSize
+	// these coords are centred at the origin, we need the furthest point
 	Duplicate/O/FREE xw, xw1
 	Duplicate/O/FREE yw, yw1
 	xw1[] = abs(xw[p])
 	yw1[] = abs(yw[p])
-	Variable xOff = WaveMax(xw1)
-	Variable yOff = WaveMax(yw1)
+	// this will find the most extreme point and add 2 to it
+	// we need to do this so that we can set the background seed and not encounter the ROI
+	Variable xOff = WaveMax(xw1) + 2
+	Variable yOff = WaveMax(yw1) + 2
 	// offset a copy of original coordinate set
 	xw1[] = xOff + xw[p]
 	yw1[] = yOff + yw[p]
