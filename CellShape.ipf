@@ -562,7 +562,7 @@ Function ProcessAllConditions()
 	Label/W=p_Img_AreaROI left "Mask area (\u03BCm\S2\M)"
 	Label/W=p_Img_Symmetry left "Symmetry"
 	Label/W=p_Img_MaxFromCentre left "Max from centre (\u03BCm)"
-	Label/W=p_Img_MinFromCentre left "Max from centre (\u03BCm)"
+	Label/W=p_Img_MinFromCentre left "Min from centre (\u03BCm)"
 	
 	// Look at maj/minor axes on a plot
 	plotName = "p_Img_Axes"
