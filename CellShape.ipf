@@ -532,8 +532,6 @@ Function ProcessAllConditions()
 	endfor
 	
 	String plotName
-	KillWindow/Z summaryLayout
-	NewLayout/N=summaryLayout
 	
 	for(i = 0; i < nTargets; i += 1)
 		plotName =  "p_" + StringFromList(i,targetWaveList)
