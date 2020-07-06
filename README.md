@@ -6,6 +6,27 @@ Analysis of cell shape from 2D outlines in IGOR Pro.
 
 ## Analysis
 
+A number of cell shape descriptors are analyzed.
+Note that the intended use of `CellShape` for analysis of cell outlines from single images of different cells grouped by experimental condition, i.e. it is not (currently) intended for use with movie-type data.
+
+Briefly, **violin plots** where dots represent individual cells and the marker indicates the mean, show:
+
+- minor axis length
+- major axis length
+- cell perimeter
+- cell area (mask area is an equivalent metric)
+- aspect ratio, minor:major axes
+- symmetry, ratio of the cell area to the area of a the cell footprint reflected on its major axis
+- convex area, area of a convex hull enclosing the cell perimeter
+- solidity, ratio of cell area to convex area
+- extent, ratio of cell area to the area of a bounding box
+- maximum distance to the perimeter from the cell center
+- minimum distance to the perimeter from the cell center
+
+A **plot** of minor axis length vs major axis length.
+Each cell in the dataset is represented by a bubble, the size of which corresponds to that cell's area.
+
+An **image quilt** to show the dataset.
 
 ## Outputs
 
@@ -58,7 +79,11 @@ For example:
 
 Igor will determine the conditions, as long as the files are logically named (see ipf for details).
 Igor will ask in which order you'd like the outputs organised.
+
 ![img](img/inOrder.png?raw=true "image")
+
 Next, you have the opportunity to rename conditions for the plots to make sense.
+
 ![img](img/aliasCheck.png?raw=true "image")
+
 Click **Do It** and Igor will do the rest!
