@@ -1,5 +1,7 @@
 # CellShape
 
+[![DOI](https://zenodo.org/badge/202709292.svg)](https://zenodo.org/badge/latestdoi/202709292)
+
 Analysis of cell shape from 2D outlines in IGOR Pro.
 
 [**Analysis**](#analysis) | [**Outputs**](#outputs) | [**Input Data**](#input-data)
