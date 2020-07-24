@@ -1,8 +1,10 @@
 #pragma TextEncoding = "UTF-8"
 #pragma rtGlobals=3		// Use modern global access method and strict wave access.
+#pragma version=1.01
 
 // IMOD models converted using model2point are the input here.
 // Note that naming of files is important.
+// Should be: conditionName_exptID_UID, i.e. siGL2_242_001
 // GFP_Tub_X_Y and GFP_X_Y will cause problems.
 // Must be "UniqueAlnum"_X_Y for the code to run in current state.
 
@@ -28,6 +30,7 @@ Function TheLoader()
 	ProcessAllModels()
 	CollectAllMeasurements()
 	ProcessAllConditions()
+	MakeAllSuperplots()
 	ImageQuilt()
 	MakeTheLayouts("p",5,3, rev = 1, saveIt = 0)
 	MakeTheLayouts("quilt",1,2, rev = 1, saveIt = 0, orient = 1) // landscape
@@ -463,18 +466,29 @@ End
 Function ProcessAllConditions()
 	WAVE/Z/T condWave
 	WAVE/Z/T all_Img_Label
+	WAVE/Z superPlotChoice
+	WAVE/Z/T exptWave
+	
+	// are we making superplots?
+	Variable nExpts
+	if(superPlotChoice[0] == 1)
+		nExpts = numpnts(exptWave)
+	else
+		nExpts = 0
+	endif
 	
 	Variable cond = numpnts(condWave)
 	Variable nWaves = dimsize(all_Img_Label,0)
 	// all_Img_index will hold index of condition [0]
-	// number of contours [1] possibly redundant
-	// index of all_Img_Label
-	Make/O/N=(nWaves,3) all_Img_Index
-	all_Img_Index[][2] = p
+	// optional: index of experiment [1]
+	// number of contours [2]
+	// index of all_Img_Label [3]
+	Make/O/N=(nWaves,4) all_Img_Index
+	all_Img_Index[][3] = p
 	Variable counter
-	String condition, dataFolderName
+	String condition, experiment, dataFolderName
 	
-	Variable i,j
+	Variable i, j, k
 	
 	for(i = 0; i < cond; i += 1)
 		counter = 0
@@ -483,8 +497,14 @@ Function ProcessAllConditions()
 			dataFolderName = All_Img_Label[j][0]
 			if(stringmatch(dataFolderName,condition + "_*") == 1)
 				all_Img_Index[j][0] = i
-				all_Img_Index[j][1] = counter
+				all_Img_Index[j][2] = counter
 				counter += 1
+				for(k = 0; k < nExpts; k += 1)
+					experiment = condition + "_" + exptWave[k]
+					if(stringmatch(dataFolderName, experiment + "_*") == 1)
+						all_Img_index[j][1] = k
+					endif
+				endfor
 			endif
 		endfor
 	endfor
@@ -497,7 +517,7 @@ Function ProcessAllConditions()
 		w0Name = "cond" + num2str(i) + "_Img_Index"
 		Make/O/N=(nWaves) $w0Name
 		Wave w0 = $w0Name
-		w0[] = (all_Img_Index[p][0] == i) ? all_Img_Index[p][2] : NaN
+		w0[] = (all_Img_Index[p][0] == i) ? all_Img_Index[p][3] : NaN
 		WaveTransform zapnans w0
 	endfor
 	
@@ -505,10 +525,10 @@ Function ProcessAllConditions()
 	String targetWaveList = "Img_MinAxis;Img_MajAxis;Img_Perimeter;Img_Area;Img_AspectRatio;Img_Circularity;"
 	targetWaveList += "Img_ConvexArea;Img_Solidity;Img_Extent;Img_AreaROI;Img_Symmetry;Img_MaxFromCentre;Img_MinFromCentre;"
 	Variable nTargets = ItemsInList(targetWaveList)
-	String w1Name, tName,w2Name
+	String w1Name, tName, w2Name
 	Variable nRows
 	// which condition has the most cells? We need to know this to make the plots
-	WaveStats/Q/RMD=[][1] all_Img_Index
+	WaveStats/Q/RMD=[][2] all_Img_Index
 	Variable mostCells = V_Max + 1 // 0-based
 	
 	for(i = 0; i < cond; i += 1)
@@ -588,6 +608,188 @@ Function ProcessAllConditions()
 	ModifyGraph/W=$plotName height={Aspect,1}
 	Label/W=$plotName left "Minor axis (\u03BCm)"
 	Label/W=$plotName bottom "Major axis (\u03BCm)"
+End
+
+
+Function MakeAllSuperplots()
+	WAVE/Z superPlotChoice
+	WAVE/Z/T condWave
+	if(superPlotChoice[0] == 0)
+		return 1 // nothing happened
+	endif
+	WAVE/Z/T exptWave
+	Variable nExpt = numpnts(exptWave)
+	WAVE/Z all_Img_Index
+	
+	String targetWaveList = "Img_MinAxis;Img_MajAxis;Img_Perimeter;Img_Area;Img_AspectRatio;Img_Circularity;"
+	targetWaveList += "Img_ConvexArea;Img_Solidity;Img_Extent;Img_AreaROI;Img_Symmetry;Img_MaxFromCentre;Img_MinFromCentre;"
+	Variable nTargets = ItemsInList(targetWaveList)
+	String plotName, wName
+	Variable cond = numpnts(condWave)
+	Variable mostCells
+	
+	Variable i, j
+	
+	// make the expt index waves for each condition and a colorwave to do lookup
+	for(i = 0; i < cond; i += 1)
+		wName = "cond" + num2str(i) + "_Img_Index"
+		Wave w = $wName
+		Make/O/N=(numpnts(w)) $("cond" + num2str(i) + "_spColor")
+		Wave exptIndexW = $("cond" + num2str(i) + "_spColor")
+		exptIndexW[] = all_Img_Index[w[p]][1]
+		mostCells = max(mostCells,numpnts(w))
+	endfor
+	MakeColorWave(nExpt,"colorWave_sp")
+	MakeColorWave(nExpt,"colorWave_spA", alpha = DecideOpacity(mostCells))
+	WAVE/Z colorWave_sp, colorWave_spA
+	// we need labelWave and x positions for it for the superplots
+	WAVE/Z/T labelWave
+	Make/O/N=(numpnts(labelWave)) labelxWave = p
+	// we need a matrix to collect the averages for doing stats
+	Make/O/N=(nExpt,cond)/FREE matForStats
+	String aveName
+	
+	for(i = 0; i < nTargets; i += 1)
+		plotName =  "sp_" + StringFromList(i,targetWaveList)
+		KillWindow/Z $plotName
+		Display/N=$plotName
+		for(j = 0; j < cond; j += 1)
+			wName = "cond" + num2str(j) + "_" + StringFromList(i,targetWaveList)
+			Wave w = $wName
+			Wave xW = SinAxWaveGenerator(w,j)
+			// calculate x positions for plotting a sinA style plot
+			AppendToGraph/W=$plotName w vs xW
+			Wave exptIndexW = $("cond" + num2str(j) + "_spColor")
+			ModifyGraph/W=$plotName zColor($wName)={exptIndexW,*,*,cindexRGB,0,colorWave_spA}
+			ModifyGraph/W=$plotName mode($wName)=3,marker($wName)=19,mrkThick($wName)=0
+			// add the averages
+			Wave aveW = MakeSuperPlotAverages(w,j)
+			aveName = NameOfWave(aveW)
+			AppendToGraph/W=$plotName aveW[][1] vs aveW[][0]
+			ModifyGraph/W=$plotName zColor($aveName)={aveW[][3],*,*,cindexRGB,0,colorWave_sp}
+			ModifyGraph/W=$plotName mode($aveName)=3,marker($aveName)=19,useMrkStrokeRGB($aveName)=1
+			matForStats[][j] = aveW[p][1]
+		endfor
+		
+		SetAxis/A/N=1/E=1/W=$plotName left
+		ModifyGraph userticks(bottom)={labelxWave,labelWave}
+		SetAxis/W=$plotName bottom -0.5, cond - 0.5
+		ModifyGraph/W=$plotName margin(left)=40
+		
+		DoStatsAndLabel(matForStats,plotName)
+	endfor
+	
+	// Label y-axes
+	Label/W=sp_Img_Area left "Area (\u03BCm\S2\M)"
+	Label/W=sp_Img_Perimeter left "Perimeter (\u03BCm)"
+	Label/W=sp_Img_minAxis left "Minor axis (\u03BCm)"
+	Label/W=sp_Img_majAxis left "Major axis (\u03BCm)"
+	Label/W=sp_Img_AspectRatio left "Aspect Ratio"
+	Label/W=sp_Img_Circularity left "Circularity"
+	Label/W=sp_Img_ConvexArea left "Convex area (\u03BCm\S2\M)"
+	Label/W=sp_Img_Solidity left "Solidity"
+	Label/W=sp_Img_Extent left "Extent"
+	Label/W=sp_Img_AreaROI left "Mask area (\u03BCm\S2\M)"
+	Label/W=sp_Img_Symmetry left "Symmetry"
+	Label/W=sp_Img_MaxFromCentre left "Max from centre (\u03BCm)"
+	Label/W=sp_Img_MinFromCentre left "Min from centre (\u03BCm)"
+	
+	MakeTheLayouts("sp",5,3, rev = 1, saveIt = 0)
+End
+
+STATIC Function/WAVE SinAxWaveGenerator(yw,xVal)
+	Wave yW
+	Variable xVal
+	
+	String yWName = NameOfWave(yW)
+	String xWName = yWName + "_x"
+	Make/O/N=(numpnts(yW)) $xWName
+	Wave sp_XWave = $xWName
+	sp_xWave = xVal
+	
+	Variable nBin, binSize, loBin, hiBin
+	Variable nRow, firstRow, inBin, maxNBin
+	Variable groupWidth = 0.4 // this is hard-coded for now
+	Variable i
+	
+	Duplicate/O/FREE yW, tempW, keyW
+	keyW[] = p
+	Sort tempW, tempW, keyW
+	nRow = numpnts(yW)
+	// make wave to store the counts per bin
+	Make/O/N=(nRow)/I/FREE sp_IntWave
+	Make/O/N=(nRow)/FREE sp_nWave
+	// make a histogram of yW so that we can find the modal bin
+	Histogram/B=5 yW
+	WAVE/Z W_Histogram
+	nBin = numpnts(W_Histogram)
+	binSize = deltax(W_Histogram)
+	maxNbin = WaveMax(W_Histogram) + 1
+	
+	for(i = 0; i < nBin; i += 1)
+		loBin = WaveMin(tempW) + (i * binSize)
+		hiBin = WaveMin(tempW) + ((i + 1) * binSize)
+		if(i == 0)
+			loBin = 0
+		elseif(i == nBin - 1)
+			hiBin = inf
+		endif
+		sp_IntWave[] = (tempW[p] >= loBin && tempW[p] < hiBin) ? 1 : 0
+		inBin = sum(sp_IntWave)
+		// is there anything to calculate?
+		if(inBin == 0)
+			continue
+		endif
+		// yes, then 
+		FindValue/I=1 sp_IntWave
+		if(V_row == -1)
+			continue
+		else
+			firstRow = V_row
+		endif
+		sp_nWave[] = (sp_IntWave[p] == 1) ? p - firstRow : NaN
+		if(mod(inBin,2) == 0)
+			// change the foundRowValue to a triangular number (divisor would be inBin - 1 to get -1 to +1)
+			sp_nWave[] = (mod(sp_nWave[p],2) == 0) ? (sp_nWave[p] + 1) / -(maxNBin - 1) : sp_nWave[p] / (maxNBin - 1)
+		else
+			// change the foundRowValue to a triangular number (divisor would be inBin to get -1 to +1)
+			sp_nWave[] = (mod(sp_nWave[p],2) == 0) ? sp_nWave[p] / maxNBin : (sp_nWave[p] + 1) / -maxNBin
+		endif
+		// assign to xWave
+		sp_xWave[] = (numtype(sp_nWave[p]) != 2) ? xVal + sp_nWave[p] * groupWidth : sp_xWave[p]
+	endfor
+	// make the order of xWave match yW
+	Sort keyW, sp_xWave
+	
+	return sp_xWave
+End
+
+
+STATIC Function/WAVE MakeSuperPlotAverages(inW,xVal)
+	Wave inW
+	Variable xVal
+	
+	Wave exptIndexW = $("cond" + num2str(xVal) + "_spColor")
+	Variable nExpt = WaveMax(exptIndexW) + 1
+	String aveName = NameOfWave(inW) + "_Ave"
+	Make/O/N=(nExpt,4) $aveName
+	Wave aveW = $aveName
+	// set 1st column to be the x position for the averages
+	aveW[][0] = xVal
+	// y values (averages) go in 2nd col and in 3rd col we put the marker types, 4th will be p
+	Make/O/N=(12)/FREE markerW={19,17,16,18,23,29,26,14,8,6,5,7}
+	aveW[][2] = markerW[p] // we're not using this in CellShape but it's used in CellMigration so it's here for compatibility
+	aveW[][3] = p
+	
+	Variable i
+	
+	for(i = 0; i < nExpt; i += 1)
+		Extract/O/FREE inW, extractedValW, exptIndexW == i
+		WaveStats/Q/M=1 extractedValW
+		aveW[i][1] = V_Avg
+	endfor
+	
+	return aveW
 End
 
 Function ImageQuilt()
@@ -755,7 +957,7 @@ STATIC Function TheDiviner(fList)
 	MoveWave fileNameFWave, root:fileNameWave // save a copy in root
 	
 	Variable nFiles = numpnts(fileNameFWave)
-	Make/O/N=(nFiles)/T/FREE shortNameWave
+	Make/O/N=(nFiles)/T/FREE shortNameWave, shortExptWave
 	// expression here. In future this could be determined by looking for separators first
 	String expr="([[:alnum:]]+)\\w([[:digit:]]+)\\w([[:digit:]]+)"
 	String cond, expt, cell
@@ -763,14 +965,26 @@ STATIC Function TheDiviner(fList)
 	Variable i
 	
 	for(i = 0; i < nFiles; i += 1)
-		// put all the conditions in to shortNameWave
+		// put all the conditions in to shortNameWave and expts into shortExptWave
 		SplitString/E=(expr) fileNameFWave[i], cond, expt, cell
 		shortNameWave[i] = cond
+		shortExptWave[i] = expt
 	endfor
 	FindDuplicates/RT=condWave shortNameWave
+	FindDuplicates/RT=exptWave shortExptWave
 	WAVE/Z/T condWave
+	WAVE/Z/T exptWave
+	// check that we have results for all experiments from all conditions
+	// if so, we will offer superplot. Superplot option stored as a wave in root
+	Make/O/N=(1) superPlotChoice = 0
+	if(numpnts(exptWave) > 1 && CheckThatAllDataExists(condWave,exptWave,fList) == 0)
+		superPlotChoice[0] = 1
+	else
+		superPlotChoice[0] = 0
+	endif
 	if(numpnts(condWave) == 1)
-		return 0
+		//return 0
+		Print "Only one condition found"
 	elseif(numpnts(condWave) == 0)
 		return -1 // error no conditions found
 	endif
@@ -822,49 +1036,61 @@ STATIC Function byte_value(data, byte)
 	return (data & (0xFF * (2^(8*byte)))) / (2^(8*byte))
 End
 
-/// @param	cond	variable for number of conditions
-Function MakeColorWave(cond)
-	Variable cond
+/// @param	nRow	variable for number of conditions
+/// @param	wName	string to name the resulting colorwave
+/// @param	[alpha]	optional variable for alpha column, n.b. 16-bit integer
+Function MakeColorWave(nRow, wName, [alpha])
+	Variable nRow
+	String wName
+	Variable alpha
 	
 	// Pick colours from SRON palettes
 	String pal
-	if(cond == 1)
+	if(nRow == 1)
 		pal = SRON_1
-	elseif(cond == 2)
+	elseif(nRow == 2)
 		pal = SRON_2
-	elseif(cond == 3)
+	elseif(nRow == 3)
 		pal = SRON_3
-	elseif(cond == 4)
+	elseif(nRow == 4)
 		pal = SRON_4
-	elseif(cond == 5)
+	elseif(nRow == 5)
 		pal = SRON_5
-	elseif(cond == 6)
+	elseif(nRow == 6)
 		pal = SRON_6
-	elseif(cond == 7)
+	elseif(nRow == 7)
 		pal = SRON_7
-	elseif(cond == 8)
+	elseif(nRow == 8)
 		pal = SRON_8
-	elseif(cond == 9)
+	elseif(nRow == 9)
 		pal = SRON_9
-	elseif(cond == 10)
+	elseif(nRow == 10)
 		pal = SRON_10
-	elseif(cond == 11)
+	elseif(nRow == 11)
 		pal = SRON_11
 	else
 		pal = SRON_12
 	endif
 	
 	Variable color
-	Make/O/N=(cond,3) root:colorWave
-	WAVE colorWave = root:colorWave
+	String colorWaveFullName = "root:" + wName
+	if(ParamisDefault(alpha) == 1)
+		Make/O/N=(nRow,3) $colorWaveFullName
+		WAVE w = $colorWaveFullName
+	else
+		Make/O/N=(nRow,4) $colorWaveFullName
+		WAVE w = $colorWaveFullName
+		w[][3] = alpha
+	endif
+	
 	Variable i
 	
-	for(i = 0; i < cond; i += 1)
+	for(i = 0; i < nRow; i += 1)
 		// specify colours
 		color = str2num(StringFromList(mod(i, 12),pal))
-		colorwave[i][0] = hexcolor_red(color)
-		colorwave[i][1] = hexcolor_green(color)
-		colorwave[i][2] = hexcolor_blue(color)
+		w[i][0] = hexcolor_red(color)
+		w[i][1] = hexcolor_green(color)
+		w[i][2] = hexcolor_blue(color)
 	endfor
 End
 
@@ -1084,21 +1310,34 @@ Function ButtonProc(ctrlName) : ButtonControl
 End
 
 // This is the Alias check to make a label wave
+// We will also ask if the user would like a superplot or an aggregate analysis
 Function OptionalAliases()
 	Wave/T/Z condWave = root:condWave
 	Variable cond = numpnts(condWave)
-	MakeColorWave(cond)
+	MakeColorWave(cond, "colorWave")
 	Wave/Z colorWave = root:colorWave
 	// duplicate the condWave to make a tentative labelWave
 	Duplicate/O condWave, root:labelWave
 	Wave/T/Z labelWave = root:labelWave
-
+	
+	// now deal with experiments
+	Wave/Z superPlotChoice = root:superPlotChoice
+	Variable superPlotCheck = 0
+	if(WaveExists(superPlotChoice) == 1)
+		superPlotCheck = superPlotChoice[0]
+	endif
+	
 	DoWindow/K AliasCheck
 	NewPanel/N=AliasCheck/K=1/W=(40, 40, 460, 150+30*cond)
 	// labelling of columns
 	DrawText/W=AliasCheck 10,30,"Name"
 	DrawText/W=AliasCheck 160,30,"Alias (a nice name for the plot labels)"
 	DrawText/W=AliasCheck 10,100+30*cond,"Cell Shape Analysis"
+	if(superPlotCheck == 1)
+		CheckBox cbox0,pos={140,80+30*cond},size={20,20},title="Superplot?",value=superPlotChoice[0],mode=0
+	else
+		CheckBox cbox0
+	endif
 	// do it button
 	Button DoIt,pos={280,70+30*cond},size={100,20},proc=DoItButtonProc,title="Do It"
 	// insert rows
@@ -1123,11 +1362,14 @@ End
 Function DoItButtonProc(ctrlName) : ButtonControl
 	String ctrlName
  	
+ 	WAVE/Z superPlotChoice = root:superPlotChoice
  	WAVE/T/Z labelWave = root:labelWave
 	Variable okvar = 0
 	
 	strswitch(ctrlName)	
 		case "DoIt" :
+			ControlInfo/W=AliasCheck cbox0
+			superPlotChoice[0] = V_Value
 			// check CondWave
 			okvar = WaveChecker(labelWave)
 			if (okvar == -1)
@@ -1183,4 +1425,105 @@ STATIC function NameChecker(TextWaveToCheck)
 		endfor
 	endfor
 	return 1
+End
+
+
+STATIC function CheckThatAllDataExists(condW, exptW, fileList)
+	Wave/T condW, exptW
+	String fileList
+	
+	Variable nCond = numpnts(condW)
+	Variable nExpt = numpnts(exptW)
+	Variable nFiles = ItemsInList(fileList)
+	String stringToMatch
+	Variable matches = 0
+	
+	Variable i, j, k
+	
+	for(i = 0; i < nCond; i += 1)
+		for(j = 0; j < nExpt; j += 1)
+			stringToMatch = condW[i] + "_" + exptW[j] + "_*"
+			for(k = 0; k < nFiles; k += 1)
+				if(StringMatch(StringFromList(k,fileList), stringToMatch) == 1)
+					matches += 1
+					break
+				endif
+			endfor
+		endfor
+	endfor
+	
+	if(matches == nCond * nExpt)
+		return 0
+	else
+		return -1
+	endif
+End
+
+STATIC Function DoStatsAndLabel(m0,plotName)
+	Wave m0
+	String plotName
+	
+	String wName = NameOfWave(m0)
+	Variable groups = DimSize(m0,1)
+	Variable reps = DimSize(m0,0)
+	if(reps < 3)
+		Print "Less than three repeats, so no stats added to superplot"
+		return -1
+	endif
+	String pStr, boxName, lookup
+	Variable pVal, i
+	if(groups == 2)
+		Make/O/N=(reps)/FREE w0,w1
+		w0[] = m0[p][0]
+		w1[] = m0[p][1]
+		KillWaves/Z m0
+		StatsTTest/Q w0,w1
+		Wave/Z W_StatsTTest
+		pVal = W_StatsTTest[%P]
+		pStr = FormatPValue(pVal)
+		TextBox/C/N=text0/W=$plotName/F=0/A=MT/X=0.00/Y=0.00 "p = " + pStr
+	elseif(groups > 2)
+		SplitWave m0
+		StatsDunnettTest/Q/WSTR=S_WaveNames
+		WAVE/Z M_DunnettTestResults
+		for(i = 1; i < groups; i += 1)
+			boxName = "text" + num2str(i)
+			lookup = "0_vs_" + num2str(i)
+			pStr = FormatPValue(M_DunnettTestResults[%$(lookup)][%P])
+			TextBox/C/N=$boxName/W=$plotName/F=0/A=MT/X=(((i - (groups/2 - 0.5))/(groups / 2))/2 * 100)/Y=0.00 pStr
+		endfor
+		KillTheseWaves(S_WaveNames)
+	else
+		return -1
+	endif
+end
+
+STATIC Function/S FormatPValue(pValVar)
+	Variable pValVar
+	
+	String pVal = ""
+	String preStr,postStr
+	
+	if(pValVar > 0.05)
+		sprintf pVal, "%*.*f", 2,2, pValVar
+	else
+		sprintf pVal, "%*.*e", 1,1, pValVar
+	endif
+	if(pValVar > 0.99)
+		// replace any p ~= 1 with p > 0.99
+		pVal = "> 0.99"
+	elseif(pValVar == 0)
+		// replace any p = 0 with p < 1e-24
+		pVal = "< 1e-24"
+	endif
+	if(StringMatch(pVal,"*e*") == 1)
+		preStr = pVal[0,2]
+		if(StringMatch(pVal[5],"0") == 1)
+			postStr = pVal[6]
+		else
+			postStr = pVal[5,6]
+		endif
+		pVal = preStr + " x 10\S\u2212" + postStr
+	endif
+	return pVal
 End

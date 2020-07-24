@@ -30,6 +30,8 @@ Each cell in the dataset is represented by a bubble, the size of which correspon
 
 An **image quilt** to show the dataset.
 
+If your data is appropriate and named correctly, a **superplot** can be made for all of the above listed violin plots.
+
 ## Outputs
 
 *Example data is available in this repo together with example outputs.*
@@ -41,6 +43,10 @@ A series of plots that compare the experimental conditions are generated.
 Additionally, an image quilt of cell outlines is generated, this is maximized to show the most data possible while making same-sized quilts.
 
 ![img](img/output2.png?raw=true "image")
+
+If your data are appropriate then **superplot** can be selected as an option (at the Alias Check stage).
+
+![img](img/output3.png?raw=true "image")
 
 ## Input data
 
