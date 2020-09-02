@@ -56,15 +56,15 @@ For input into Igor we need to convert each model to a text file using `model2po
 For example:
 
 ```bash
-model2point -fl -ob -z example_Model_IMOD example.txt
+model2point -fl -ob -z example.mod example.txt
 ```
 
 In the shell, a directory of models can be converted using:
 
 ```bash
-find . -type f ! -name "*.*" |
+find . -type f -name "*.mod" |
  while IFS= read file_name; do
- model2point -fl -ob -z "$file_name" "${file_name##*\/}.txt"
+ model2point -fl -ob -zc -ze "$file_name" "${file_name/mod/txt}"
  done
 ```
 
